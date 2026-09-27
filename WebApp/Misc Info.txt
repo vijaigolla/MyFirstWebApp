@@ -1,0 +1,146 @@
+﻿HTTP request syntax
+
+The request has to state what is needed and in what format
+
+1. Method URL Version
+2. 0 or or many headers 
+	Accept: text/html
+	Accept-Language:en-US
+	........
+3. Body 
+.........
+
+Example:
+get / HTTP1.1
+Accept: text/html
+Accept-Language:en-US
+
+
+HTTPContext:
+
+HTTP Query String:
+http://localhost:12345/employee?id = 1&name=Don
+
+Headers:
+Dont pollute the URL, use the headers instead, they have a length limit
+Use it for Authentication/Authorization
+
+In actual routing in .NET, location(url) then method (verb) is the order
+
+HTTP Response:
+
+The response has the following
+
+1. Version StatusCode Status Description
+2. 0 or or many headers 
+	Date: 1/1/2026
+	Server: Kestrel
+	Content-Type: text/html
+	Content-Length: 150
+	........
+3. Body 
+.........
+
+HTTP Status Codes:
+100 - Informational
+101 - Switching Protocols
+
+200 - Success
+201 - Created
+204 - No Content
+
+300 - Redirection
+301 - Moved Permanently
+302 - Found
+304 - Not Modified
+
+404 - Not Found
+400 - Bad Request
+401 - Unauthorized
+
+500 - Server Error
+502 - Bad Gateway
+503 - Service Unavailable
+
+Exception handling middleware pipeline
+
+Middleware Pipeline Theory:
+
+Kestrel converts HTTP request to HttpContext
+the context is passed down the middleware is modified as it goes along and returns along the same path or a short circuited path
+
+it is a series of function calls
+
+terminal middleware short-circuits a flow as needed
+
+How to create Middleware components?
+
+1.app.use method
+	removing call to the next middleware can short-circuit the flow and return
+
+2.app.Run(async(context) 
+	terminal middleware, short-circuits the flow and returns
+3. app.Map method
+	used to branch the middleware pipeline based on the request path
+4. app.MapWhen method
+	used to branch the middleware pipeline based on a predicate function that evaluates the HttpContext
+5. app.UseWhen method
+	used to conditionally execute middleware based on a predicate function that evaluates the HttpContext then returns to the main pipeline
+
+Writing to a Response Body but not returning a response immediately, how to do it?
+
+Middleware order in ASP.Net Core is as follows:
+1. Exception Handling Middleware defined as app.UseExceptionHandler("/Error") or app.UseDeveloperExceptionPage() for development environment
+2. Https Redirection Middleware defnied as app.UseHttpsRedirection() to redirect HTTP requests to HTTPS
+3. Static Files Middleware defined as app.UseStaticFiles() to serve static files from the wwwroot folder
+4. Routing Middleware defined as app.UseRouting() to enable routing capabilities in the application
+5. Authentication Middleware defined as app.UseAuthentication() to authenticate users based on the configured authentication scheme
+6. Authorization Middleware defined as app.UseAuthorization() to authorize users based on their roles and policies
+
+Different ways to create custom middleware in ASP.Net Core:
+1. Using a class that implements the IMiddleware interface
+2. Using a class that has a constructor that takes a RequestDelegate and an Invoke method
+3. Using an extension method on IApplicationBuilder that takes a RequestDelegate and an Invoke method
+4. Using an inline delegate with the app.Use method
+5. Using an inline delegate with the app.Run method
+6. Using an inline delegate with the app.Map method
+7. Using an inline delegate with the app.MapWhen method
+
+Steps to create a middleware component in ASP.Net Core:
+1. Create a class that implements the IMiddleware interface or has a constructor that takes a RequestDelegate and an Invoke method
+2. Register the middleware component in the ConfigureServices method of the Startup class using the services.AddTransient, services.AddScoped, or services.AddSingleton method
+3. Add the middleware component to the middleware pipeline in the Configure method of the Startup class using the app.Use, app.Run, app.Map, or app.MapWhen method or app.usemiddleware method and more
+
+
+Understanding endpoints in ASP.Net Core: (A terminal middleware that short-circuits the flow and returns a response to the client)
+1. An endpoint is a piece of code that can handle an HTTP request and generate an HTTP response
+2. Endpoints are defined using the app.Map, app.MapWhen, or app.Use methods in the Configure method of the Startup class
+3. Endpoints can be associated with a specific HTTP method (GET, POST, PUT, DELETE, etc.) and a specific route pattern using MapGet, MapPost, MapPut, MapDelete, and more
+4. Endpoints can be used to implement RESTful APIs, MVC controllers, Razor Pages, gRPC services, and more
+5. Endpoints can be decorated with attributes such as [HttpGet], [HttpPost], [Route], [Authorize], and more to specify their behavior and requirements
+
+Router:
+router is a terminal middleware that short-circuits the flow and returns a response to the client
+Routing is the process of mapping an incoming HTTP request to a specific endpoint based on the request's URL and HTTP method
+404 Not Found is returned when no matching endpoint is found for the incoming request by using the 404 middleware or by returning a NotFound result from an endpoint
+
+Required Root Parameters:
+The required root parameters for an HTTP request are the method, URL, and version. 
+The method specifies the type of request being made (e.g., GET, POST, PUT, DELETE), 
+the URL specifies the resource being requested, and the version specifies the HTTP version being used (e.g., HTTP/1.1, HTTP/2).
+An example of a required root parameter for an HTTP request is: GET /api/employees/123 HTTP/1.1
+Route templates are used to define the structure of the URL and can include parameters that are extracted from the URL and passed to the endpoint for processing.
+An example of a route template is: /api/employees/{id}, where {id} is a parameter that can be extracted from the URL and passed to the endpoint for processing.
+The literal segments of the route template are the parts of the URL that are fixed and do not change, while the parameter segments are the parts of the URL that can vary and are extracted from the URL and passed to the endpoint for processing.
+The literal segments of the route template are used to match the incoming request's URL, while the parameter segments are used to extract values from the URL and pass them to the endpoint for processing.They are not case sensitive and can be used to define the structure of the URL and extract values from the URL for processing by the endpoint.
+optional parameters in route templates are parameters that may or may not be present in the URL and can be specified using a question mark (?) after the parameter name.
+for example, /api/employees/{id?} is a route template that defines an optional parameter {id}, which may or may not be present in the URL. If the parameter is not present, the endpoint can still be invoked without it.
+Multiple optional parameters can be defined in a route template by specifying multiple parameters with question marks (?) after their names. The order of the parameters in the route template matters, as it determines how the URL is matched and how the values are extracted from the URL for processing by the endpoint.
+You cannot have required parameters after optional parameters in a route template, as it would create ambiguity in how the URL is matched and how the values are extracted from the URL for processing by the endpoint.
+You can get the route parameters from the HttpContext.Request.RouteValues property, which is a dictionary that contains the values of the parameters extracted from the URL based on the route template.
+Default values for route parameters can be specified in the route template using the equals sign (=) after the parameter name. For example, /api/employees/{id=1} is a route template that defines a default value of 1 for the {id} parameter. If the parameter is not present in the URL, the default value will be used when invoking the endpoint.
+Parameters can be constrained in route templates using constraints, which are specified after the parameter name using a colon (:). For example, /api/employees/{id:int} is a route template that defines a constraint that the {id} parameter must be an integer. If the value extracted from the URL does not match the constraint, the endpoint will not be invoked.
+Types of constraints that can be used in route templates include int, bool, datetime, decimal, double, float, guid, long, short, string, and more. Custom constraints can also be defined by implementing the IRouteConstraint interface.
+An example IrouteConstraint implementation is a class that checks if a parameter value is a valid email address. The class can implement the IRouteConstraint interface and define the Match method to check if the parameter value matches the email address format. If the value does not match, the endpoint will not be invoked.
+
+Model Binding in ASP.Net Core:
