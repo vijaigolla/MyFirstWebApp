@@ -20,6 +20,7 @@ app.UseMiddleware<MyCustomMiddleware>();
 //    await context.Response.WriteAsync("Middleware 1.1 processed\r\n");
 //});
 //using MapWhen to conditionally branch the middleware pipeline based on the request path and method.
+//app.use vs appbuilder.use: app.use is used to add middleware to the main pipeline, while appbuilder.use is used to add middleware to a specific branch of the pipeline created by app.map or app.mapwhen.
 app.MapWhen(context => { return context.Request.Path.StartsWithSegments("/Employee") && context.Request.Method == "GET" && context.Request.Query.ContainsKey("Id"); }, appBuilder =>
 {
     appBuilder.Use(async (context, next) =>
@@ -38,7 +39,7 @@ app.MapWhen(context => { return context.Request.Path.StartsWithSegments("/Employ
     {
         await context.Response.WriteAsync("Middleware 1.1 processed\r\n");
     });
-}); )
+}); 
 
 app.Map("/map1", appBuilder =>
 {

@@ -105,6 +105,7 @@ Different ways to create custom middleware in ASP.Net Core:
 5. Using an inline delegate with the app.Run method
 6. Using an inline delegate with the app.Map method
 7. Using an inline delegate with the app.MapWhen method
+8. Using an inline delegate with the app.UseWhen method
 
 Steps to create a middleware component in ASP.Net Core:
 1. Create a class that implements the IMiddleware interface or has a constructor that takes a RequestDelegate and an Invoke method
@@ -118,6 +119,178 @@ Understanding endpoints in ASP.Net Core: (A terminal middleware that short-circu
 3. Endpoints can be associated with a specific HTTP method (GET, POST, PUT, DELETE, etc.) and a specific route pattern using MapGet, MapPost, MapPut, MapDelete, and more
 4. Endpoints can be used to implement RESTful APIs, MVC controllers, Razor Pages, gRPC services, and more
 5. Endpoints can be decorated with attributes such as [HttpGet], [HttpPost], [Route], [Authorize], and more to specify their behavior and requirements
+6. Endpoints defined using app.UseWhen or app.MapWhen can be used to conditionally execute middleware based on a predicate function that evaluates the HttpContext, allowing for more complex routing scenarios and dynamic endpoint selection based on request characteristics. 
+   But the endpoints defined using app.UseWhen or app.MapWhen are not terminal middleware and do not short-circuit the flow, allowing for further processing of the request by subsequent middleware components in the pipeline.
+7. Endpoints that are not terminal middleware can be used to implement middleware components that perform additional processing on the request or response, such as logging, caching, compression, or authentication, before passing the request to the next middleware component in the pipeline.
+
+Types of endpoints in ASP.Net Core:
+The types of endpoints in ASP.Net Core include:
+1. Minimal API endpoints: These are endpoints defined using the app.MapGet, app.MapPost, app.MapPut, app.MapDelete, and other similar methods in the Configure method of the Startup class. They are typically used to implement lightweight APIs with minimal overhead and can be used to handle simple requests and responses.
+2. MVC controller endpoints: These are endpoints defined using the [HttpGet], [HttpPost], [HttpPut], [HttpDelete], and other similar attributes on controller action methods. They are typically used to implement more complex APIs with full-featured routing, model binding, and validation capabilities.
+3. Razor Pages endpoints: These are endpoints defined using the @page directive in Razor Pages. They are typically used to implement web pages with server-side rendering and can be used to handle both GET and POST requests.
+4. gRPC service endpoints: These are endpoints defined using the gRPC framework in ASP.Net Core. They are typically used to implement high-performance, low-latency APIs that can handle large volumes of requests and responses.
+5. SignalR hub endpoints: These are endpoints defined using the SignalR framework in ASP.Net Core. They are typically used to implement real-time web applications that can handle bi-directional communication between clients and servers.
+
+
+Endpoints vs Terminal Middleware:
+Endpoints are specific handlers for requests that are defined using the app.Map, app.MapWhen, or app.Use methods in the Configure method of the Startup class. 
+They can be associated with a specific HTTP method and route pattern, and can be used to implement RESTful APIs, MVC controllers, Razor Pages, gRPC services, and more. Endpoints can also be decorated with attributes to specify their behavior and requirements.
+
+Terminal middleware, on the other hand, is a middleware component that short-circuits the flow of the request and returns a response to the client.
+It is typically used to handle requests that do not match any defined endpoints or to provide a default response for unhandled requests. 
+Terminal middleware can be defined using the app.Run method or by returning a response from an endpoint.
+
+In summary, while endpoints are specific handlers for requests, terminal middleware serves as a last resort to process requests that do not match any defined endpoints.
+
+Where the Functions OverlapThe overlap happens because both serve as the ultimate request handler—their primary job is to generate an HTTP response and short-circuit the pipeline so no further down-stream logic executes.Under the hood,
+modern Endpoints are actually executed by a specialized Terminal Middleware.In modern .NET Core (.NET 6+),
+the pipeline sets up an implicit structure:UseRouting() matches the incoming URL to an Endpoint object.Custom middlewares run (and can inspect what endpoint was matched).UseEndpoints() / EndpointMiddleware acts as a Terminal Middleware. 
+It grabs the matched endpoint and executes its handler, short-circuiting the request back up the chain.Code Example of OverlapYou can achieve the exact same functional outcome (returning text on a specific route) using either approach:
+
+// 1. Using Terminal Middleware
+app.Use(async (context, next) => {
+    if (context.Request.Path == "/old-way") {
+        await context.Response.WriteAsync("Hello from Terminal Middleware!");
+        return; // Short-circuiting explicitly by NOT calling await next()
+    }
+    await next();
+});
+
+// 2. Using an Endpoint
+app.MapGet("/new-way", async (context) => {
+    await context.Response.WriteAsync("Hello from an Endpoint!");
+}); // Under the hood, this compiles into an endpoint handled by EndpointMiddleware
+
+Deep Dive: Each Middleware Component Explained
+1. Exception Handler / Developer Exception Page (app.UseExceptionHandler() / app.UseDeveloperExceptionPage())
+·Why it's first: It must be placed at the very beginning of the pipeline so it wraps all subsequent middleware.
+·Role: When the request moves forward, this middleware does nothing but open a try/catch block. If any middleware downstream throws an unhandled exception, the request short-circuits, and control flows backward directly into this component to log the error and return a friendly error page or an RFC 7807 Problem Details response.
+2. HSTS (app.UseHsts())
+·Why it's here: It must run early, but only on secure connections where no error has disrupted the response header layout.
+·Role: Adds the Strict-Transport-Security header to the HTTP response. This forces browsers to always interact with your site using HTTPS for subsequent requests, preventing man-in-the-middle attacks.
+3. HTTPS Redirection (app.UseHttpsRedirection())
+·Why it's here: It sits right before asset delivery to block unencrypted requests.
+·Role: Checks incoming traffic. If a user hits your app via http://, this middleware intercepts it, issues an HTTP 307/301 redirect status code, and forces the browser to reload the page via https://.
+4. Static Files (app.UseStaticFiles())
+·Why it's here: It is positioned before routing, authentication, and authorization for performance optimization.
+·Role: If the incoming URL matches a physical asset inside your wwwroot folder (like image.png, site.css, or app.js), this middleware acts as Terminal Middleware. It directly reads the file off the disk, writes it to the response stream, and returns it to the browser. By putting it here, your server completely avoids wasting CPU cycles on routing or database authorization checks for public images and styles.
+5. Routing (app.UseRouting())
+·Why it's here: It must run before any middleware that relies on route logic (like CORS configurations or Authorization rules).
+·Role: This middleware parses the requested URL path and inspects your application's defined endpoints (like Controllers or Minimal API maps). It selects a matching endpoint and attaches it directly to the request's context (HttpContext.GetEndpoint()). Crucially, it does not execute the route handler yet; it simply assigns it.
+6. CORS (app.UseCors())
+·Why it's here: It must follow UseRouting because modern CORS policies can be evaluated on a per-endpoint basis using attributes like [EnableCors].
+·Role: Appends Cross-Origin Resource Sharing headers to the response, establishing which external domains, HTTP methods, and request headers are legally allowed to interact with your API from a browser context.
+7. Authentication (app.UseAuthentication())
+·Why it's here: It must figure out who the user is before the pipeline tries to determine what they are allowed to do.
+·Role: Inspects the request for a credential payload (like a JWT Bearer token in the Authorization header or a session Cookie). If found, it populates the HttpContext.User property with a ClaimsPrincipal identity object.
+8. Authorization (app.UseAuthorization())
+·Why it's here: It relies directly on the identity established by UseAuthentication and the route target identified by UseRouting.
+·Role: Compares the ClaimsPrincipal on the request against the security metadata attached to the target endpoint. If the endpoint requires a role or policy that the user lacks, this middleware short-circuits the pipeline immediately and returns an HTTP 401 Unauthorized or HTTP 403 Forbidden status.
+9. Custom Middleware (app.Use(...) / app.UseMiddleware<T>())
+·Why it's here: By placing custom logic after Authorization, you guarantee that your business logic code only executes for verified, legitimate traffic.
+·Role: This is where you insert custom logging, request-correlation IDs, localization adjustments, multi-tenant database connection setting, or custom request sanitization.
+10. Endpoint Middleware (app.MapControllers() / app.MapGet() / app.UseEndpoints())
+·Why it's last: This is the core engine of your software application.
+·Role: It acts as the ultimate Terminal Middleware. It reads the endpoint selection made back in step 5 (UseRouting), executes the underlying action method, Razor Page handler, or Minimal API delegate, and serializes your data models into JSON or HTML to generate the final HTTP response payload.
+
+
+
+                     +---------------------------------------+
+
+                     |         Incoming HTTP Request         |
+                     +---------------------------------------+
+                                         |
+                                         v
+                     +---------------------------------------+
+
+                     | 1. Exception Handler / Dev Page       |
+                     +---------------------------------------+
+                                         |
+                                         v
+                     +---------------------------------------+
+
+                     | 2. HSTS (Strict Transport Security)   |
+                     +---------------------------------------+
+                                         |
+                                         v
+                     +---------------------------------------+
+
+                     | 3. HTTPS Redirection                  |
+                     +---------------------------------------+
+                                         |
+                                         v
+                     +---------------------------------------+
+
+                     | 4. Static Files                       |
+                     +---------------------------------------+
+                                         |
+                       Matches Physical File (e.g., .css, .png)?
+                                       /   \
+                                     YES    NO
+                                     /        \
+                                    v          v
+          +------------------------------+   +------------------------------+
+
+          | Directly Serves Public Asset |   | 5. Routing (Selects Endpoint)|
+          |      (Short-circuits)        |   +------------------------------+
+          +------------------------------+                  |
+                         |                                  v
+                         |                   +------------------------------+
+
+                         |                   | 6. CORS                      |
+                         |                   +------------------------------+
+
+                         |                                  |
+                         |                                  v
+                         |                   +------------------------------+
+
+                         |                   | 7. Authentication            |
+                         |                   +------------------------------+
+
+                         |                                  |
+                         |                                  v
+                         |                   +------------------------------+
+
+                         |                   | 8. Authorization             |
+                         |                   +------------------------------+
+
+                         |                                  |
+                         |                        Fails Policy Check?
+                         |                              /   \
+                         |                            YES    NO
+                         |                            /        \
+                         |                           v          v
+                         |             +-----------------+   +------------------+
+
+                         |             | Returns 401/403 |   | 9. Custom        |
+                         |             | (Short-circuits)|   |    Middleware    |
+                         |             +-----------------+   +------------------+
+
+                         |                     |                        |
+                         |                     |                        v
+                         |                     |             +------------------+
+                         |                     |             | 10. Endpoint     |
+                         |                     |             |     Execution    |
+                         |                     |             +------------------+
+                         |                     |                        |
+                         v                     v                        v
+                     +-------------------------------------------------------+
+
+                     |               Generates HTTP Response                 |
+                     +-------------------------------------------------------+
+                                         |
+                                         v
+                     +-------------------------------------------------------+
+
+                     |  Bubbles BACKWARD through all executed middleware in   |
+                     |  reverse order (to apply outbound headers/logging)    |
+                     +-------------------------------------------------------+
+                                         |
+                                         v
+                     +-------------------------------------------------------+
+
+                     |              Outbound HTTP Response                   |
+                     +-------------------------------------------------------+
 
 Router:
 router is a terminal middleware that short-circuits the flow and returns a response to the client
@@ -144,3 +317,65 @@ Types of constraints that can be used in route templates include int, bool, date
 An example IrouteConstraint implementation is a class that checks if a parameter value is a valid email address. The class can implement the IRouteConstraint interface and define the Match method to check if the parameter value matches the email address format. If the value does not match, the endpoint will not be invoked.
 
 Model Binding in ASP.Net Core:
+Model binding is the process of mapping HTTP request data to action method parameters or properties of a model object. 
+It automatically maps data from the request (such as query string values, form data, or route values) to the parameters of an action method or the properties of a model object. 
+This simplifies the process of working with request data in ASP.NET Core applications.
+.NET core model binding supports various data sources, including query strings, form data, route values, headers, and more.
+How does it do it? 
+It uses a set of built-in model binders that are responsible for extracting data from the request and converting it to the appropriate type.
+For example, the DefaultModelBinder is responsible for binding simple types (such as int, string, bool) from the request data to action method parameters or model properties.
+First it looks for the value in the route values, then in the query string, and finally in the form data. If it finds a matching value, it converts it to the appropriate type and assigns it to the parameter or property.
+if not found, it will use the default value for the parameter or property type (e.g., 0 for int, null for reference types).
+
+Body can be used for complex types, such as objects or collections, and can be sent in various formats, such as JSON or XML, for verbs like POST, PUT, PATCH, and DELETE. 
+The model binder will deserialize the request body into the appropriate type based on the Content-Type header of the request.
+For minimal APIs, model binding can be done using the [FromBody], [FromQuery], [FromRoute], [FromHeader], and [FromForm] attributes to specify the source of the data for each parameter.
+However, for complex types, the [FromBody] attribute is typically used to indicate that the data should be bound from the request body.
+Another restrction for minimal APIs is that only one parameter can be bound from the request body, as the body can only be read once. If multiple parameters need to be bound from the body, a single complex type can be used to encapsulate the data.
+Also, for minimalAPI's the body format is typically JSON, and the model binder will use the System.Text.Json serializer to deserialize the request body into the appropriate type.
+
+Use BindAsync method to bind the request body to a complex type asynchronously. This method reads the request body and deserializes it into the specified type, allowing for more efficient handling of large request bodies.
+for example, you can define a complex type called Employee and use the BindAsync method to bind the request body to an instance of the Employee class. The method will read the request body, deserialize it into an Employee object, and return it for further processing in the action method.
+Syntax for BindAsync method is as follows:
+Employee employee = await context.Request.BindAsync<Employee>();
+
+Returning a response in ASP.Net Core using the Results class:
+return results.Ok(employee);
+results.badRequest, results.notFound, results.unauthorized, results.forbidden, results.conflict, results.created, results.noContent, results.file, results.json, results.text, results.redirect, and more
+Typed results can be used to return strongly typed responses, such as results.Ok<Employee>(employee) or results.NotFound<Employee>().
+Another way to return a response is to use the TypedResults class, which provides a set of static methods for returning common HTTP status codes and response types.
+Typedresults.OK, TypedResults.NotFound, TypedResults.BadRequest, TypedResults.Unauthorized, TypedResults.Forbidden, TypedResults.Conflict, TypedResults.Created, TypedResults.NoContent, TypedResults.File, TypedResults.Json, TypedResults.Text, TypedResults.Redirect, and more
+
+Mixing Results and TypedResults is possible, but it is recommended to use one approach consistently throughout the application for clarity and maintainability.
+the typed results approach is more strongly typed and provides better compile-time checking, while the results approach is more flexible and allows for more customization of the response.
+
+Some times we have to combine typedresults and results to return a response that includes both strongly typed data and additional metadata or headers. 
+For example, you might want to return a typed result with a custom header or status code. In such cases, you can use the results approach to add the additional information while still returning the strongly typed data.
+
+RFC 7807 defines the HTTP/1.1 protocol, which is the most widely used version of the HTTP protocol. It specifies the syntax and semantics of HTTP requests and responses, including the required root parameters, headers, and body content. The RFC also defines the status codes that can be returned in HTTP responses, as well as the rules for caching, authentication, and content negotiation.
+
+Results.ValidationProblem is a method that can be used to return a validation error response in ASP.Net Core. It is typically used when the model binding process fails due to validation errors, such as missing required fields or invalid data formats. The method returns a 400 Bad Request response with a JSON payload that includes details about the validation errors.
+
+What is needed to create a useExceptionHandler middleware in ASP.Net Core?
+To create a `UseExceptionHandler` middleware in ASP.Net Core, you need to follow these steps:
+
+builder.Services.AddProblemDetails() 
+
+if(!app.Environment.IsDevelopment())
+{
+	app.UseExceptionHandler();
+}
+
+1. In the `Configure` method of the `Startup` class, call the `app.UseExceptionHandler` method and pass in a path to a custom error handling endpoint. For example:
+2. Create a custom error handling endpoint that will handle exceptions and return an appropriate response to the client. This can be done by creating a new controller action or Razor Page that will handle the error and return a response.
+3. In the custom error handling endpoint, you can access the exception details using the `HttpContext.Features.Get<IExceptionHandlerFeature>()` method. This will allow you to log the exception, return a custom error message, or perform any other necessary actions.
+4. Optionally, you can configure the `UseExceptionHandler` middleware to handle specific types of exceptions or to return different responses based on the exception type. This can be done by using the `app.UseExceptionHandler` method with a lambda expression that checks the exception type and returns an appropriate response.
+5  AddProblemDetailsFactory is a method that can be used to customize the response returned by the `UseExceptionHandler` middleware. It allows you to create a custom `ProblemDetails` object that includes additional information about the error, such as a custom error message or additional metadata. This can be useful for providing more detailed error responses to clients and for logging purposes.
+	for example builder.Services.AddProblemDetails() can be used to register a custom `ProblemDetailsFactory` implementation that will be used by the `UseExceptionHandler` middleware to create the error response. 
+	This allows you to customize the error response format and include additional information as needed.
+
+app.usestandarderrorpage() is a method that can be used to configure the `UseExceptionHandler` middleware to return a standard error page for unhandled exceptions. 
+This can be useful for providing a consistent error response to clients and for logging purposes. 
+The standard error page can be customized by creating a Razor Page or controller action that will handle the error and return the appropriate response.
+
+app.UseStatusCodePages() is a method that can be used to configure the `UseExceptionHandler` middleware to return a status code page for specific HTTP status codes.
